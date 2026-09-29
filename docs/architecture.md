@@ -158,3 +158,34 @@ An attestation within the Soroban SAS framework flows through several definitive
 - **Revoked State (`revoke`)**: If the attestation was initialized with `revocable = true`, the `attester` (or a delegated proxy) can flip the state by setting the `revocation_time` parameter on-chain. From this moment, `verify_attestation` returns `false`.
 - **Expired State**: Occurs naturally when the ledger timestamp overtakes `expiration_time`. No explicit transaction is needed to reach this state. Expired attestations strictly cannot be actively rotated or replaced in-place.
 - **Replacement (`replace_attestation`)**: Binds an active, non-revoked attestation into a revoked state natively, synchronously emitting a new child attestation mapped backwards through the `ref_uid` pointer structure.
+
+## SDK Architecture and Reliability
+
+### Schema-to-Struct Macro Generator (#343)
+
+The `soroban-sas-sdk` provides the `schema_to_struct!` declarative macro that bridges schema definitions with strongly-typed Rust data structures. It automatically:
+- Derives `#[soroban_sdk::contracttype]` and standard traits (`Clone, Debug, PartialEq, Eq`) on generated structs.
+- Implements the `SchemaType` trait to produce canonical SAS schema definition strings (`T::schema()`).
+- Provides XDR serialization (`to_bytes(&env)`) and deserialization (`from_bytes(&env, &bytes)`).
+- Integrates seamlessly with `SchemaBuilder::with_schema_type::<T>()` and `AttestationRequestBuilder::with_schema_data(&env, &data)`.
+
+### Consistent Enum Serialization (#344)
+
+All configuration, policy, and status enums in `soroban-sas-sdk` (`SubmissionMode`, `Backoff`, `FeePolicy`, `AddressKind`, `EventTrust`, `EventParseError`, `IssuanceTimeError`) implement `serde::{Serialize, Deserialize}` with `#[serde(rename_all = "snake_case")]`. This guarantees unified JSON and CLI serialization without casing discrepancies across client, RPC, and tooling boundaries.
+
+### Cross-Platform Tooling and Build Portability (#354)
+
+The project `Makefile` standardizes build, test, lint, and deployment workflows across Linux, macOS, and Windows environments:
+- Enforces `SHELL := /usr/bin/env bash` with strict error handling (`.SHELLFLAGS := -eu -o pipefail -c`).
+- Dynamically discovers Docker Compose v2 (`docker compose`) or v1 (`docker-compose`).
+- Executes all helper scripts via `bash ./scripts/...` to prevent missing executable bit or permission errors on cross-platform checkouts.
+- Provides a self-documenting `help` target for developer ergonomics.
+
+### RPC Chaos Engineering and Network Resilience (#356)
+
+The SDK includes a dedicated chaos engineering test harness (`ChaosRpcServer`) in `soroban_sas_sdk::chaos` that simulates real-world network degradations:
+- Immediate and mid-flight connection drops (TCP reset / abrupt severance).
+- Truncated response bodies (partial EOF).
+- Network latency spikes and socket timeouts.
+- Transient flapping and recovery schedules (`ChaosSchedule::Transient`, `Flapping`, `Always`).
+- Resilient transaction submission polling via `SubmissionPolicy::with_retry_transport_errors(true)` that survives intermittent RPC drops before settlement deadlines.
